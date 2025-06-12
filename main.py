@@ -14,7 +14,7 @@ def get_lang_text(lang, key):
             "cid_result": "✅ Here is your Confirmation ID (CID):\n\n{}",
             "not_found": "❌ Could not find any installation ID.",
             "api_error": "❌ Error retrieving CID. A test CID was generated.",
-            "textract_error": "❌ Error using Textract. Please try again later.",
+            "textract_error": "❌ Textract failed. Check AWS credentials.",
             "id_detected": "🔍 Detected ID:\n{}\n\n⌛ Querying CID..."
         },
         "es": {
@@ -23,7 +23,7 @@ def get_lang_text(lang, key):
             "cid_result": "✅ Aquí está tu CID (Código de Confirmación):\n\n{}",
             "not_found": "❌ No se encontró ningún ID de instalación.",
             "api_error": "❌ Error al obtener el CID. Se generó un CID de prueba.",
-            "textract_error": "❌ Error al usar Textract. Inténtalo más tarde.",
+            "textract_error": "❌ Falló el OCR. Verifica las credenciales de AWS.",
             "id_detected": "🔍 ID detectado:\n{}\n\n⌛ Consultando CID..."
         },
     }
@@ -41,6 +41,14 @@ def extract_id(text):
 
 async def process_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = get_lang(update)
+
+    if not all([
+        os.getenv("AWS_ACCESS_KEY_ID"),
+        os.getenv("AWS_SECRET_ACCESS_KEY")
+    ]):
+        await update.message.reply_text(get_lang_text(lang, "textract_error"))
+        return
+
     try:
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
@@ -56,7 +64,9 @@ async def process_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
             img_bytes = document.read()
         response = client.detect_document_text(Document={"Bytes": img_bytes})
 
-        full_text = " ".join([block["Text"] for block in response["Blocks"] if block["BlockType"] == "LINE"])
+        text_blocks = [block["Text"] for block in response["Blocks"] if block["BlockType"] in ("LINE", "WORD")]
+        full_text = " ".join(text_blocks)
+
         installation_id = extract_id(full_text)
 
         if not installation_id:
@@ -67,7 +77,7 @@ async def process_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await get_cid_and_respond(update, installation_id, lang)
 
     except Exception as e:
-        print(f"Textract error: {e}")
+        print(f"OCR error: {e}")
         await update.message.reply_text(get_lang_text(lang, "textract_error"))
 
 async def process_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
