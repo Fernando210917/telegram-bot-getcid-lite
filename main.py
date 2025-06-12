@@ -26,14 +26,11 @@ def consultar_api_simulada(id_instalacion):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nombre = update.effective_user.first_name or "usuario"
-    mensaje = (
-        f"👋 Bienvenido {nombre}, puedo extraer el ID de instalación desde una captura o una foto legible y notoria.
-"
-        "Si no es así, digita el ID de instalación manualmente por favor.
-
-"
-        "📌 Empecemos 😃"
-    )
+   mensaje = (
+    f"👋 Bienvenido {nombre}, puedo extraer el ID de instalación desde una captura o una foto legible y notoria.\n"
+    "Si no es así, digita el ID de instalación manualmente por favor.\n\n"
+    "📌 Empecemos 😃"
+)
     await update.message.reply_text(mensaje)
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
