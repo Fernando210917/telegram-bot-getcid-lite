@@ -1,90 +1,116 @@
-import os
 import logging
-import boto3
+import os
 import re
-import tempfile
 import requests
-from telegram import Update, InputFile
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    filters
-)
+import boto3
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-# Environment variables
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
-AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
-AWS_REGION = os.getenv("AWS_REGION")
+# Traducciones básicas
+def get_lang_text(lang, key):
+    texts = {
+        "en": {
+            "send_photo": "Please send a photo or paste your installation ID (9 blocks of 7 digits).",
+            "invalid_id": "❌ Invalid installation ID format.",
+            "cid_result": "✅ Here is your Confirmation ID (CID):\n\n{}",
+            "not_found": "❌ Could not find any installation ID.",
+            "api_error": "❌ Error retrieving CID. Try again later.",
+            "textract_error": "❌ Error using Textract. Please try again later.",
+        },
+        "es": {
+            "send_photo": "Por favor, envía una foto o pega tu ID de instalación (9 bloques de 7 dígitos).",
+            "invalid_id": "❌ Formato de ID de instalación inválido.",
+            "cid_result": "✅ Aquí está tu CID (Código de Confirmación):\n\n{}",
+            "not_found": "❌ No se encontró ningún ID de instalación.",
+            "api_error": "❌ Error al obtener el CID. Intenta nuevamente más tarde.",
+            "textract_error": "❌ Error al usar Textract. Inténtalo más tarde.",
+        },
+    }
+    return texts.get(lang, texts["es"]).get(key, "")
 
-# Configure logging
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+# Idioma por defecto
+def get_lang(update: Update) -> str:
+    return update.effective_user.language_code if update.effective_user else "es"
 
-# Initialize Textract client
-textract = boto3.client(
-    "textract",
-    aws_access_key_id=AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-    region_name=AWS_REGION
-)
+# Regex para ID de instalación
+def extract_id(text):
+    pattern = r"\d{7}(?:[-\s]?\d{7}){8}"
+    match = re.search(pattern, text)
+    return match.group() if match else None
 
-# Dummy function to simulate getcid.info verification
-def verificar_id(id_instalacion):
-    if id_instalacion.isdigit() and len(id_instalacion) >= 10:
-        return (
-            "✅ Verificación exitosa:\n\n"
-            "A: 602616\n\n"
-            "B: 458025\n\n"
-            "C: 645012\n\n"
-            "D: 651419\n\n"
-            "E: 582407\n\n"
-            "F: 534896\n\n"
-            "G: 262385\n\n"
-            "H: 976021"
-        )
-    return "⚠️ El ID de instalación extraído no es válido."
+# Procesar imagen
+async def process_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = get_lang(update)
+    try:
+        photo = update.message.photo[-1]
+        file = await context.bot.get_file(photo.file_id)
+        file_path = "/tmp/image.jpg"
+        await file.download_to_drive(file_path)
 
+        client = boto3.client("textract",
+                              aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+                              aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+                              region_name="us-east-1")
+
+        with open(file_path, "rb") as document:
+            img_bytes = document.read()
+        response = client.detect_document_text(Document={"Bytes": img_bytes})
+
+        full_text = " ".join([block["Text"] for block in response["Blocks"] if block["BlockType"] == "LINE"])
+        installation_id = extract_id(full_text)
+
+        if not installation_id:
+            await update.message.reply_text(get_lang_text(lang, "not_found"))
+            return
+
+        await get_cid_and_respond(update, installation_id, lang)
+
+    except Exception as e:
+        print(f"Textract error: {e}")
+        await update.message.reply_text(get_lang_text(lang, "textract_error"))
+
+# Procesar texto directo
+async def process_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = get_lang(update)
+    text = update.message.text.strip()
+    installation_id = extract_id(text)
+
+    if not installation_id:
+        await update.message.reply_text(get_lang_text(lang, "invalid_id"))
+        return
+
+    await get_cid_and_respond(update, installation_id, lang)
+
+# Consultar API GetCID
+async def get_cid_and_respond(update: Update, installation_id: str, lang: str):
+    try:
+        response = requests.get(f"https://getcid.info/api?installation_id={installation_id}")
+        data = response.json()
+
+        if "result" not in data:
+            await update.message.reply_text(get_lang_text(lang, "api_error"))
+            return
+
+        await update.message.reply_text(get_lang_text(lang, "cid_result").format(data["result"]))
+
+    except Exception as e:
+        print(f"API error: {e}")
+        await update.message.reply_text(get_lang_text(lang, "api_error"))
+
+# Comando /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    nombre = update.effective_user.first_name
-    bienvenida = (
-        f"👋 Bienvenido {nombre}, puedo extraer el ID de instalación desde una captura o foto "
-        "legible y notoria.\n\n"
-        "📎 También puedes digitarlo manualmente si lo prefieres.\n\n"
-        "🚀 Empecemos 😃"
-    )
-    await update.message.reply_text(bienvenida)
+    lang = get_lang(update)
+    await update.message.reply_text(get_lang_text(lang, "send_photo"))
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    id_instalacion = update.message.text.strip()
-    msg = await update.message.reply_text("⏳ Procesando el ID ingresado...")
-    resultado = verificar_id(id_instalacion)
-    await msg.edit_text(resultado)
-
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = await update.message.reply_text("📸 Imagen recibida. Extrayendo ID de instalación...")
-    photo = update.message.photo[-1]
-    photo_file = await photo.get_file()
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tf:
-        await photo_file.download_to_drive(tf.name)
-        with open(tf.name, "rb") as document:
-            image_bytes = document.read()
-        response = textract.detect_document_text(Document={'Bytes': image_bytes})
-        text = " ".join([block["Text"] for block in response["Blocks"] if block["BlockType"] == "LINE"])
-        id_match = re.search(r"(\d{7,}-?){2,}", text.replace(" ", "").replace("\n", ""))
-        if id_match:
-            id_instalacion = id_match.group(0).replace("-", "")
-            resultado = verificar_id(id_instalacion)
-        else:
-            resultado = "❌ No se pudo extraer un ID de instalación válido de la imagen."
-    await msg.edit_text(resultado)
-
+# Iniciar bot
 def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    logging.basicConfig(level=logging.INFO)
+    app = ApplicationBuilder().token(os.getenv("BOT_TOKEN")).build()
+
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(MessageHandler(filters.PHOTO, process_image))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), process_text))
+
     app.run_polling()
 
 if __name__ == "__main__":
