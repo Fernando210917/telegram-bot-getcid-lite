@@ -1,0 +1,1 @@
+Bot OCR mejorado con pytesseract + preprocesamiento adaptado para Render.
