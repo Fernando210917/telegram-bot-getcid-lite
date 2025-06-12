@@ -6,7 +6,6 @@ import boto3
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-# Traducciones básicas
 def get_lang_text(lang, key):
     texts = {
         "en": {
@@ -14,31 +13,32 @@ def get_lang_text(lang, key):
             "invalid_id": "❌ Invalid installation ID format.",
             "cid_result": "✅ Here is your Confirmation ID (CID):\n\n{}",
             "not_found": "❌ Could not find any installation ID.",
-            "api_error": "❌ Error retrieving CID. Try again later.",
+            "api_error": "❌ Error retrieving CID. A test CID was generated.",
             "textract_error": "❌ Error using Textract. Please try again later.",
+            "id_detected": "🔍 Detected ID:\n{}\n\n⌛ Querying CID..."
         },
         "es": {
             "send_photo": "Por favor, envía una foto o pega tu ID de instalación (9 bloques de 7 dígitos).",
             "invalid_id": "❌ Formato de ID de instalación inválido.",
             "cid_result": "✅ Aquí está tu CID (Código de Confirmación):\n\n{}",
             "not_found": "❌ No se encontró ningún ID de instalación.",
-            "api_error": "❌ Error al obtener el CID. Intenta nuevamente más tarde.",
+            "api_error": "❌ Error al obtener el CID. Se generó un CID de prueba.",
             "textract_error": "❌ Error al usar Textract. Inténtalo más tarde.",
+            "id_detected": "🔍 ID detectado:\n{}\n\n⌛ Consultando CID..."
         },
     }
     return texts.get(lang, texts["es"]).get(key, "")
 
-# Idioma por defecto
 def get_lang(update: Update) -> str:
     return update.effective_user.language_code if update.effective_user else "es"
 
-# Regex para ID de instalación
 def extract_id(text):
-    pattern = r"\d{7}(?:[-\s]?\d{7}){8}"
-    match = re.search(pattern, text)
-    return match.group() if match else None
+    cleaned = re.sub(r"[\s\-_.]", "", text)
+    if len(cleaned) == 63 and cleaned.isdigit():
+        blocks = [cleaned[i:i+7] for i in range(0, 63, 7)]
+        return " ".join(blocks)
+    return None
 
-# Procesar imagen
 async def process_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = get_lang(update)
     try:
@@ -63,13 +63,13 @@ async def process_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(get_lang_text(lang, "not_found"))
             return
 
+        await update.message.reply_text(get_lang_text(lang, "id_detected").format(installation_id))
         await get_cid_and_respond(update, installation_id, lang)
 
     except Exception as e:
         print(f"Textract error: {e}")
         await update.message.reply_text(get_lang_text(lang, "textract_error"))
 
-# Procesar texto directo
 async def process_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = get_lang(update)
     text = update.message.text.strip()
@@ -79,30 +79,29 @@ async def process_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(get_lang_text(lang, "invalid_id"))
         return
 
+    await update.message.reply_text(get_lang_text(lang, "id_detected").format(installation_id))
     await get_cid_and_respond(update, installation_id, lang)
 
-# Consultar API GetCID
 async def get_cid_and_respond(update: Update, installation_id: str, lang: str):
     try:
-        response = requests.get(f"https://getcid.info/api?installation_id={installation_id}")
+        response = requests.get(f"https://getcid.info/api?installation_id={installation_id}", timeout=5)
         data = response.json()
 
         if "result" not in data:
-            await update.message.reply_text(get_lang_text(lang, "api_error"))
-            return
+            raise ValueError("API returned invalid response")
 
         await update.message.reply_text(get_lang_text(lang, "cid_result").format(data["result"]))
 
     except Exception as e:
         print(f"API error: {e}")
+        fake_cid = "716732999362407812154775536380109673582027487733658541495337958"
         await update.message.reply_text(get_lang_text(lang, "api_error"))
+        await update.message.reply_text(get_lang_text(lang, "cid_result").format(fake_cid))
 
-# Comando /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = get_lang(update)
     await update.message.reply_text(get_lang_text(lang, "send_photo"))
 
-# Iniciar bot
 def main():
     logging.basicConfig(level=logging.INFO)
     app = ApplicationBuilder().token(os.getenv("BOT_TOKEN")).build()
