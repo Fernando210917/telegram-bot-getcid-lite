@@ -9,6 +9,7 @@ import re
 import numpy as np
 import os
 import cv2
+import random
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
@@ -18,15 +19,26 @@ logging.basicConfig(
 )
 
 def consultar_api_simulada(id_instalacion):
-    if id_instalacion.isdigit() and len(id_instalacion) >= 10:
-        return f"✅ CID confirmado: 123-456-7890 para ID {id_instalacion}"
-    return "⚠️ ID de instalación inválido o no encontrado."
+    # Devuelve un CID de ejemplo con valores aleatorios de 6 dígitos
+    bloques = ['A','B','C','D','E','F','G','H']
+    cid = '\n'.join([f"{b}: {random.randint(100000,999999)}" for b in bloques])
+    return f"✅ Se verificó exitosamente, aquí está su ID de Confirmación:\n\n{cid}"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Hola 👋, envíame una imagen del ID de instalación o escríbelo manualmente.")
+    nombre = update.effective_user.first_name or "usuario"
+    mensaje = (
+        f"👋 Bienvenido {nombre}, puedo extraer el ID de instalación desde una captura o una foto legible y notoria.
+"
+        "Si no es así, digita el ID de instalación manualmente por favor.
+
+"
+        "📌 Empecemos 😃"
+    )
+    await update.message.reply_text(mensaje)
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     id_instalacion = update.message.text.strip()
+    await update.message.reply_text("🔍 Verificando ID...")
     respuesta = consultar_api_simulada(id_instalacion)
     await update.message.reply_text(respuesta)
 
@@ -38,6 +50,8 @@ def preprocess_image_pytesseract(pil_image):
     return blur
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🖼️ Extrayendo ID de Instalación...")
+
     photo = await update.message.photo[-1].get_file()
     photo_bytes = await photo.download_as_bytearray()
     image = Image.open(BytesIO(photo_bytes)).convert("RGB")
@@ -48,8 +62,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if bloques and len(bloques) >= 3:
         id_instalacion = ''.join(bloques)
-        bloques_texto = ' '.join(bloques)
-        respuesta = f"🧾 ID detectado por bloques:\n{bloques_texto}\n\n{consultar_api_simulada(id_instalacion)}"
+        await update.message.reply_text("🔎 Verificando ID...")
+        respuesta = consultar_api_simulada(id_instalacion)
     else:
         respuesta = "❌ No se pudo detectar un ID de instalación en la imagen."
 
